@@ -1,0 +1,30 @@
+# Dependencias npm do projeto
+node_modules/
+
+# Bundles de compilacao do React Native
+.expo/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# configuracoes locais edo ambiente e chaves secretas
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# arquivos do firebase 
+.firebase
+firebase-debug.log*
+
+# Sistema Operacional 
+.DS_Store
+Thumbs.db 
+
+# configuracoes do vs code
+.vscode/
+
+# miscelanea 
+dump/
