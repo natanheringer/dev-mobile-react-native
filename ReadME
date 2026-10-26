@@ -1,0 +1,8 @@
+nstalação da Navegação
+No projeto Expo, execute no terminal:
+npm install @react-navigation/native
+Depois, instale as dependências obrigatórias do Expo:
+npx expo install react-native-screens react-native-safe-area-context
+Agora, instale o tipo de navegação que usaremos (Stack
+Navigation):
+npm install @react-navigation/native-stack
