@@ -1,28 +1,20 @@
 import React from 'react';
-import { View, Text, Button, StyleSheet } from 'react-native';
+import { View, Text, Button } from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-export default function HomeScreen ({ navigation }: any) {
+import type { RotasApp } from '../../App';
+import { homeStyles as styles } from '../styles/homeStyles';
+
+type Props = NativeStackScreenProps<RotasApp, 'Home'>;
+
+export default function HomeScreen({ navigation }: Props) {
     return (
         <View style={styles.container}>
-        <Text style={styles.title}>Menu Principal</Text>
-        <Button
-        title="Controle de Estoque" 
-        onPress={() => navigation.navigate('Funcionarios')}
-        />
+            <Text style={styles.title}>Menu Principal</Text>
+            <Button
+                title="Cadastro de Funcionários"
+                onPress={() => navigation.navigate('Funcionarios')}
+            />
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        justifyContent: 'center',
-        padding: 20,
-    },
-    title: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        marginBottom: 20, 
-        textAlign: 'center',
-    },
-});

@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Cadastro de Funcionários",
+    "slug": "dev-mobile-react-native",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.exemplo.devmobilereactnative"
+    }
+  }
+}

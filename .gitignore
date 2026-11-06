@@ -28,3 +28,5 @@ Thumbs.db
 
 # miscelanea 
 dump/
+# variaveis de ambiente de exemplo ficam versionadas (.env.example)
+!.env.example
