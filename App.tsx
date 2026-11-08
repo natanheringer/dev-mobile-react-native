@@ -13,11 +13,15 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import HomeScreen from './src/screens/HomeScreen';
 import FuncionariosScreen from './src/screens/FuncionariosScreen';
+import ProdutosScreen from './src/screens/ProdutosScreen';
+import FornecedoresScreen from './src/screens/FornecedoresScreen';
 
 /*** Rotas e os parametros que cada uma recebe (nenhuma recebe por enquanto). */
 export type RotasApp = {
     Home: undefined;
     Funcionarios: undefined;
+    Produtos: undefined;
+    Fornecedores: undefined;
 };
 
 const Stack = createNativeStackNavigator<RotasApp>();
@@ -32,6 +36,16 @@ export default function App() {
                         name="Home"
                         component={HomeScreen}
                         options={{ title: 'Início' }}
+                    />
+                    <Stack.Screen
+                        name="Produtos"
+                        component={ProdutosScreen}
+                        options={{ title: 'Produtos' }}
+                    />
+                    <Stack.Screen
+                        name="Fornecedores"
+                        component={FornecedoresScreen}
+                        options={{ title: 'Fornecedores' }}
                     />
                     <Stack.Screen
                         name="Funcionarios"

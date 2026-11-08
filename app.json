@@ -11,6 +11,9 @@
     },
     "android": {
       "package": "com.exemplo.devmobilereactnative"
-    }
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
   }
 }
