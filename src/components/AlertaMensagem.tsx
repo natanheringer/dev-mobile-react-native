@@ -15,7 +15,7 @@ export default function AlertaMensagem({ tipo, mensagem }: Props) {
     const estiloTexto = tipo === 'erro' ? estilos.alertaErroTexto : estilos.alertaSucessoTexto;
 
     return (
-        <View style={estiloCaixa}>
+        <View style={estiloCaixa} accessibilityLiveRegion="polite">
             <Text style={estiloTexto}>{mensagem}</Text>
         </View>
     );

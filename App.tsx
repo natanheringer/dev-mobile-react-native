@@ -17,6 +17,7 @@ import FornecedoresScreen from './src/screens/FornecedoresScreen';
 
 import { inicializarTabelas } from './src/database/sqlite';
 import { observarAuth, type UsuarioApp } from './src/services/authService';
+import { iniciarSincronizacao } from './src/services/sincronizacaoService';
 import { cores } from './src/styles/cores';
 import { estilos } from './src/styles/estilosCompartilhados';
 
@@ -33,6 +34,10 @@ const Stack = createNativeStackNavigator<RotasApp>();
 export default function App() {
     const [usuario, setUsuario] = useState<UsuarioApp | null>(null);
     const [verificandoAuth, setVerificandoAuth] = useState(true);
+
+    useEffect(() => {
+        if (usuario) return iniciarSincronizacao();
+    }, [usuario?.uid]);
 
     // 1. Inicializa o banco local SQLite
     useEffect(() => {

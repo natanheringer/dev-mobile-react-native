@@ -1,19 +1,29 @@
 import * as SQLite from 'expo-sqlite';
 
-/** Abre (ou cria) o banco SQLite local. */
-export async function conectarBanco() {
-    try {
-        return await SQLite.openDatabaseAsync('estoque.db');
-    } catch (erro) {
-        console.warn('SQLite não pôde ser aberto:', erro);
-        return null;
+export interface FuncionarioPendente {
+    id: string;
+    nome: string;
+    email: string;
+    cargo: string;
+}
+
+const ouvintes = new Set<() => void>();
+let bancoPronto: Promise<SQLite.SQLiteDatabase> | undefined;
+
+/** Abre o banco uma vez e cria a tabela antes de usá-lo. */
+export function conectarBanco() {
+    if (!bancoPronto) {
+        bancoPronto = abrirBanco().catch((erro) => {
+            bancoPronto = undefined;
+            throw erro;
+        });
     }
+    return bancoPronto;
 }
 
 /** Cria a tabela de funcionários na primeira abertura. */
-export async function inicializarTabelas() {
-    const db = await conectarBanco();
-    if (!db) return;
+async function abrirBanco() {
+    const db = await SQLite.openDatabaseAsync('estoque.db');
 
     await db.execAsync(`
         CREATE TABLE IF NOT EXISTS funcionarios (
@@ -24,29 +34,41 @@ export async function inicializarTabelas() {
             sincronizado INTEGER DEFAULT 0
         );
     `);
+    return db;
 }
 
-/** Guarda um funcionário localmente quando não há internet. */
+export async function inicializarTabelas() {
+    await conectarBanco();
+}
+
+/** Avisa as telas e a sincronização quando a fila local muda. */
+export function observarPendentes(aoMudar: () => void) {
+    ouvintes.add(aoMudar);
+    return () => { ouvintes.delete(aoMudar); };
+}
+
+/** Guarda o cadastro localmente antes de tentar enviá-lo ao Firestore. */
 export async function salvarFuncionarioOffline(id: string, nome: string, email: string, cargo: string) {
     const db = await conectarBanco();
-    if (!db) throw new Error('Armazenamento SQLite indisponível neste ambiente.');
 
     await db.runAsync(
         `INSERT INTO funcionarios (id, nome, email, cargo, sincronizado) VALUES (?, ?, ?, ?, 0)`,
-        id, nome, email, cargo
+        id, nome.trim(), email.trim().toLowerCase(), cargo.trim()
     );
+    ouvintes.forEach((ouvinte) => ouvinte());
 }
 
 /** Lista registros ainda não enviados à nuvem. */
-export async function buscarPendentes() {
+export async function buscarPendentes(): Promise<FuncionarioPendente[]> {
     const db = await conectarBanco();
-    if (!db) return [];
-    return await db.getAllAsync('SELECT * FROM funcionarios WHERE sincronizado = 0');
+    return db.getAllAsync<FuncionarioPendente>(
+        "SELECT id, nome, email, COALESCE(cargo, '') AS cargo FROM funcionarios WHERE sincronizado = 0 ORDER BY rowid"
+    );
 }
 
-/** Apaga os pendentes depois de sincronizar. */
-export async function limparPendentes() {
+/** Remove somente o registro que o Firestore já confirmou. */
+export async function removerPendente(id: string) {
     const db = await conectarBanco();
-    if (!db) return;
-    await db.runAsync('DELETE FROM funcionarios WHERE sincronizado = 0');
+    await db.runAsync('DELETE FROM funcionarios WHERE id = ?', id);
+    ouvintes.forEach((ouvinte) => ouvinte());
 }

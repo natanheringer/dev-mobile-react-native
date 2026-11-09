@@ -1,5 +1,6 @@
 # Dependencias npm do projeto
 node_modules/
+.npm-cache/
 
 # Bundles de compilacao do React Native
 .expo/

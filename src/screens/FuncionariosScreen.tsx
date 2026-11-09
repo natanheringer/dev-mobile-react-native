@@ -1,15 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text } from 'react-native';
-import * as Network from 'expo-network';
 import { estilos } from '../styles/estilosCompartilhados';
 import type { Funcionario } from '../types/Funcionario';
 import {
     observarFuncionarios,
-    criarFuncionario,
     atualizarFuncionario,
     removerFuncionario,
 } from '../services/funcionarioService';
-import { salvarFuncionarioOffline, buscarPendentes, limparPendentes } from '../database/sqlite';
+import { salvarFuncionarioOffline, buscarPendentes, observarPendentes, type FuncionarioPendente } from '../database/sqlite';
+import { obterEstadoSincronizacao, observarSincronizacao, sincronizarPendentes, temInternet } from '../services/sincronizacaoService';
 import BarraBusca from '../components/BarraBusca';
 import BlocoSecao from '../components/BlocoSecao';
 import CampoTexto from '../components/CampoTexto';
@@ -25,9 +24,8 @@ export default function FuncionariosScreen() {
     const [lista, setLista] = useState<Funcionario[]>([]);
     const [carregando, setCarregando] = useState(true);
     const [salvando, setSalvando] = useState(false);
-    const [sincronizando, setSincronizando] = useState(false);
-    const [isOnline, setIsOnline] = useState(true);
-    const [totalPendentes, setTotalPendentes] = useState(0);
+    const [estadoSync, setEstadoSync] = useState(obterEstadoSincronizacao);
+    const [pendentes, setPendentes] = useState<FuncionarioPendente[]>([]);
     const [formularioAberto, setFormularioAberto] = useState(false);
     const [busca, setBusca] = useState('');
     const [aviso, setAviso] = useState<string | null>(null);
@@ -38,28 +36,23 @@ export default function FuncionariosScreen() {
     const [email, setEmail] = useState('');
     const [cargo, setCargo] = useState('');
 
-    /** Lê se há internet e quantos registros estão pendentes no SQLite. */
-    const verificarStatusRede = useCallback(async () => {
+    const carregarPendentes = useCallback(async () => {
         try {
-            const rede = await Network.getNetworkStateAsync();
-            const online = rede.isConnected !== false && rede.isInternetReachable !== false;
-            setIsOnline(online);
-        } catch {
-            setIsOnline(true);
-        }
-
-        try {
-            const pendentes = await buscarPendentes();
-            setTotalPendentes(pendentes ? pendentes.length : 0);
-        } catch {
-            setTotalPendentes(0);
+            setPendentes(await buscarPendentes());
+        } catch (erro) {
+            setAviso(erro instanceof Error ? erro.message : String(erro));
+        } finally {
+            setCarregando(false);
         }
     }, []);
 
     useEffect(() => {
-        verificarStatusRede();
+        void carregarPendentes();
+        const cancelarLocal = observarPendentes(() => { void carregarPendentes(); });
+        const cancelarSync = observarSincronizacao(() => setEstadoSync(obterEstadoSincronizacao()));
+        setEstadoSync(obterEstadoSincronizacao());
 
-        return observarFuncionarios(
+        const cancelarNuvem = observarFuncionarios(
             (funcionarios: Funcionario[]) => {
                 setLista(funcionarios);
                 setCarregando(false);
@@ -69,7 +62,12 @@ export default function FuncionariosScreen() {
                 setCarregando(false);
             }
         );
-    }, [verificarStatusRede]);
+        return () => {
+            cancelarLocal();
+            cancelarSync();
+            cancelarNuvem();
+        };
+    }, [carregarPendentes]);
 
     /** Zera o formulário e fecha o cadastro. */
     function limparFormulario() {
@@ -93,7 +91,7 @@ export default function FuncionariosScreen() {
         setSucesso(null);
     }
 
-    /** Grava na nuvem se houver rede; senão, salva no SQLite. */
+    /** Novos cadastros passam pelo SQLite antes do envio à nuvem. */
     async function handleSalvar() {
         setAviso(null);
         setSucesso(null);
@@ -102,73 +100,38 @@ export default function FuncionariosScreen() {
             setAviso('Nome completo e e-mail corporativo são obrigatórios.');
             return;
         }
+        if (nome.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+            setAviso('Informe um nome com pelo menos 2 letras e um e-mail válido.');
+            return;
+        }
+        if (salvando) return;
 
         setSalvando(true);
         try {
-            const statusRede = await Network.getNetworkStateAsync();
-            const conectou = statusRede.isConnected !== false;
-
-            if (conectou) {
-                if (editandoId) {
-                    await atualizarFuncionario(editandoId, { nome, email, cargo });
-                    setSucesso('Registro atualizado no Firestore.');
-                } else {
-                    await criarFuncionario({ nome, email, cargo });
-                    setSucesso('Registro gravado na nuvem (Firestore).');
-                }
-            } else {
-                if (editandoId) {
+            if (editandoId) {
+                if (!(await temInternet())) {
                     setAviso('Edição offline não disponível no momento.');
                     return;
                 }
-                const idTemp = 'offline_' + Date.now();
+                await atualizarFuncionario(editandoId, { nome, email, cargo });
+                limparFormulario();
+                setSucesso('Registro atualizado no Firestore.');
+            } else {
+                const emailLimpo = email.trim().toLowerCase();
+                if ([...lista, ...pendentes].some((item) => item.email.toLowerCase() === emailLimpo)) {
+                    setAviso('Já existe um funcionário com esse e-mail na lista.');
+                    return;
+                }
+                const idTemp = 'offline_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
                 await salvarFuncionarioOffline(idTemp, nome, email, cargo);
-                setSucesso('Sem conexão: armazenado localmente em SQLite.');
-                verificarStatusRede();
+                await carregarPendentes();
+                limparFormulario();
+                setSucesso('Cadastro salvo no SQLite. O envio ao Firestore é automático quando há internet.');
             }
-
-            limparFormulario();
         } catch (erro) {
             setAviso(erro instanceof Error ? erro.message : String(erro));
         } finally {
             setSalvando(false);
-        }
-    }
-
-    /** Envia os pendentes do SQLite para o Firestore. */
-    async function handleSincronizar() {
-        setAviso(null);
-        setSucesso(null);
-        setSincronizando(true);
-
-        try {
-            const statusRede = await Network.getNetworkStateAsync();
-            if (statusRede.isConnected === false) {
-                setAviso('Conexão com a internet indisponível.');
-                return;
-            }
-
-            const pendentes: any = await buscarPendentes();
-            if (!pendentes || pendentes.length === 0) {
-                setSucesso('A base local já está perfeitamente sincronizada.');
-                return;
-            }
-
-            for (const item of pendentes) {
-                await criarFuncionario({
-                    nome: item.nome,
-                    email: item.email,
-                    cargo: item.cargo,
-                });
-            }
-
-            await limparPendentes();
-            setSucesso(`${pendentes.length} registro(s) sincronizado(s) com o Firestore.`);
-            verificarStatusRede();
-        } catch {
-            setAviso('Falha no processo de sincronização com o servidor.');
-        } finally {
-            setSincronizando(false);
         }
     }
 
@@ -177,6 +140,10 @@ export default function FuncionariosScreen() {
         if (!id) return;
         setAviso(null);
         try {
+            if (!(await temInternet())) {
+                setAviso('Conecte-se à internet para excluir um funcionário da nuvem.');
+                return;
+            }
             await removerFuncionario(id);
             if (editandoId === id) limparFormulario();
         } catch (erro) {
@@ -185,7 +152,11 @@ export default function FuncionariosScreen() {
     }
 
     const termo = busca.toLowerCase();
-    const itensFiltrados = lista.filter(
+    const listaCompleta: Funcionario[] = [
+        ...pendentes.map((item) => ({ ...item, pendente: true })),
+        ...lista.filter((item) => !pendentes.some((local) => local.id === item.id)),
+    ];
+    const itensFiltrados = listaCompleta.filter(
         (item) =>
             item.nome.toLowerCase().includes(termo) ||
             item.email.toLowerCase().includes(termo) ||
@@ -195,11 +166,14 @@ export default function FuncionariosScreen() {
     return (
         <View style={estilos.tela}>
             <BarraStatusRede
-                isOnline={isOnline}
-                totalPendentes={totalPendentes}
-                sincronizando={sincronizando}
-                onSincronizar={handleSincronizar}
+                isOnline={estadoSync.online}
+                totalPendentes={pendentes.length}
+                sincronizando={estadoSync.sincronizando}
+                onSincronizar={() => { void sincronizarPendentes(); }}
             />
+
+            <AlertaMensagem tipo="erro" mensagem={aviso || estadoSync.erro} />
+            <AlertaMensagem tipo="sucesso" mensagem={sucesso} />
 
             <BarraBusca
                 busca={busca}
@@ -217,8 +191,6 @@ export default function FuncionariosScreen() {
                     titulo={editandoId ? 'ATUALIZAÇÃO DE FUNCIONÁRIO' : 'CADASTRO DE NOVO MEMBRO'}
                     subtitulo="Registro corporativo com suporte a espelhamento offline."
                 >
-                    <AlertaMensagem tipo="erro" mensagem={aviso} />
-                    <AlertaMensagem tipo="sucesso" mensagem={sucesso} />
 
                     <BlocoSecao titulo="1. DADOS CADASTRAIS DO COLABORADOR">
                         <CampoTexto
@@ -249,9 +221,8 @@ export default function FuncionariosScreen() {
                         <View style={estilos.blocoInformativo}>
                             <Text style={estilos.blocoInformativoTitulo}>DESTINO DO REGISTRO:</Text>
                             <Text style={estilos.blocoInformativoTexto}>
-                                {isOnline
-                                    ? '• Conexão ativa detectada: Gravação imediata no Firestore Cloud.'
-                                    : '• Dispositivo sem rede: O registro será gravado na tabela SQLite local e entrará na fila de sincronização.'}
+                                Novos cadastros ficam no SQLite até o Firestore confirmar o recebimento.
+                                Sem internet, aguardam na lista. Ao reconectar, o envio é automático.
                             </Text>
                         </View>
                     </View>
@@ -295,10 +266,12 @@ export default function FuncionariosScreen() {
                                 </View>
                             </View>
 
-                            <AcoesItem
+                            {item.pendente ? (
+                                <Text style={estilos.itemDadoValor}>Aguardando envio automático para liberar edição e exclusão.</Text>
+                            ) : <AcoesItem
                                 onEditar={() => iniciarEdicao(item)}
                                 onExcluir={() => handleExcluir(item.id)}
-                            />
+                            />}
                         </View>
                     )}
                 />

@@ -27,7 +27,7 @@ export default function BarraStatusRede({
                     ]}
                 />
                 <Text style={estilos.statusTexto}>
-                    {isOnline ? 'CANAL ATIVO: FIRESTORE REST' : 'OFFLINE: MODO SQLITE EMBUTIDO'}
+                    {isOnline ? 'ONLINE · ENVIO AUTOMÁTICO' : 'OFFLINE · CADASTROS NO SQLITE'}
                 </Text>
             </View>
 
@@ -36,6 +36,8 @@ export default function BarraStatusRede({
                     style={estilos.btnSync}
                     onPress={onSincronizar}
                     disabled={sincronizando}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Sincronizar ${totalPendentes} cadastros pendentes`}
                     activeOpacity={0.8}
                 >
                     {sincronizando ? (
@@ -47,7 +49,7 @@ export default function BarraStatusRede({
                     )}
                 </TouchableOpacity>
             ) : (
-                <Text style={estilos.syncStatusTexto}>SQLITE SINCRONIZADO</Text>
+                <Text style={estilos.syncStatusTexto}>SEM PENDÊNCIAS</Text>
             )}
         </View>
     );

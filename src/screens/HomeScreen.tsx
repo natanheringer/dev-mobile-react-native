@@ -9,7 +9,7 @@ import { logoutUsuario } from '../services/authService';
 import { observarProdutos } from '../services/produtoService';
 import { observarFornecedores } from '../services/fornecedorService';
 import { observarFuncionarios } from '../services/funcionarioService';
-import { buscarPendentes } from '../database/sqlite';
+import { buscarPendentes, observarPendentes } from '../database/sqlite';
 import type { Produto } from '../types/Produto';
 import LinhaModulo from '../components/LinhaModulo';
 
@@ -27,14 +27,17 @@ export default function HomeScreen({ navigation, route }: any) {
         const unsubForn = observarFornecedores((lista) => setTotalFornecedores(lista.length), () => {});
         const unsubFunc = observarFuncionarios((lista) => setTotalFuncionarios(lista.length), () => {});
 
-        buscarPendentes()
+        const atualizarPendentes = () => { void buscarPendentes()
             .then((pendentes) => setTotalOfflinePendentes(pendentes?.length || 0))
-            .catch(() => setTotalOfflinePendentes(0));
+            .catch(() => setTotalOfflinePendentes(0)); };
+        const cancelarLocal = observarPendentes(atualizarPendentes);
+        atualizarPendentes();
 
         return () => {
             unsubProd();
             unsubForn();
             unsubFunc();
+            cancelarLocal();
         };
     }, []);
 
@@ -58,7 +61,7 @@ export default function HomeScreen({ navigation, route }: any) {
 
                 <View style={estilos.homeStatus}>
                     <View style={estilos.pontoOnline} />
-                    <Text style={estilos.homeStatusTexto}>FIRESTORE ATIVO · PERSISTÊNCIA LOCAL SQLITE v3</Text>
+                    <Text style={estilos.homeStatusTexto}>GESTÃO DE ESTOQUE · SQLITE + FIRESTORE</Text>
                 </View>
 
                 <View style={estilos.homeSecao}>
