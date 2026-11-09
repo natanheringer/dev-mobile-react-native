@@ -13,7 +13,8 @@
       "package": "com.exemplo.devmobilereactnative"
     },
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-sqlite"
     ]
   }
 }

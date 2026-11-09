@@ -1,12 +1,8 @@
 /***
+    API de acesso aos funcionários no Firestore (CRUD).
 
-    API de acesso aos funcionarios no Firestore (CRUD).
-
-    Esta e a unica camada que conhece o Firestore: as telas chamam apenas
-    as funcoes abaixo e recebem objetos Funcionario ja tipados. Toda funcao
-    lanca Error com mensagem legivel quando a operacao falha, para a tela
-    poder exibir o aviso ao usuario.
-
+    Esta é a camada que conversa com o Firestore e fornece fallback
+    local caso o .env com credenciais do Firebase ainda não tenha sido preenchido.
 */
 
 import {
@@ -28,19 +24,37 @@ import {
     type Unsubscribe,
 } from "firebase/firestore";
 
-import { db } from "./firebase";
+import { db, hasFirebaseConfig } from "./firebase";
 import type { Funcionario, NovoFuncionario, FuncionarioAlteracao } from "../types/Funcionario";
 
-/*** Nome da colecao no Firestore. Em um lugar so, para nao divergir. */
 export const COLECAO = "funcionarios";
-
 const colecaoFuncionarios = collection(db, COLECAO);
 
-/* ------------------------------------------------------------------ */
-/* Apoio interno                                                       */
-/* ------------------------------------------------------------------ */
+// Dados locais de fallback
+let funcionariosLocais: Funcionario[] = [
+    {
+        id: 'func-1',
+        nome: 'Natan Heringer',
+        email: 'natan@empresa.com.br',
+        cargo: 'Gerente de Estoque',
+        criadoEm: null,
+    },
+    {
+        id: 'func-2',
+        nome: 'Mariana Silva',
+        email: 'mariana.silva@empresa.com.br',
+        cargo: 'Operadora de Logística',
+        criadoEm: null,
+    },
+];
 
-/*** Converte um documento do Firestore no objeto Funcionario da aplicacao. */
+const ouvintes: Array<(f: Funcionario[]) => void> = [];
+/** Avisa as telas que a lista local mudou. */
+function notificar() {
+    ouvintes.forEach((fn) => fn([...funcionariosLocais]));
+}
+
+/** Converte um documento do Firestore para o tipo Funcionario. */
 function paraFuncionario(
     snap: QueryDocumentSnapshot<DocumentData> | DocumentSnapshot<DocumentData>
 ): Funcionario {
@@ -52,105 +66,103 @@ function paraFuncionario(
         cargo:     dados.cargo ?? "",
         criadoEm:  dados.criadoEm ?? null,
         editadoEm: dados.editadoEm ?? null,
-        // hasPendingWrites: o registro ja esta na tela mas o servidor ainda
-        // nao confirmou, e por isso criadoEm continua null por um instante.
-        pendente:  snap.metadata.hasPendingWrites,
     };
 }
 
-/***
-    Ordena do mais recente para o mais antigo.
-
-    Quem acabou de ser cadastrado chega com criadoEm null (o serverTimestamp
-    so e resolvido pelo servidor), e por isso nao pode ser ordenado pelo
-    banco: iria para o fim da lista. Aqui ele conta como o mais novo, fica
-    no topo na mesma hora e permanece no topo quando a data chega.
-*/
+/** Ordena do mais recente para o mais antigo. */
 function maisRecentesPrimeiro(a: Funcionario, b: Funcionario): number {
-    const quando = (f: Funcionario) =>
-        f.criadoEm ? f.criadoEm.toMillis() : Number.MAX_SAFE_INTEGER;
-    return quando(b) - quando(a);
+    const tempoA = a.criadoEm?.toMillis() ?? (a.pendente ? Infinity : 0);
+    const tempoB = b.criadoEm?.toMillis() ?? (b.pendente ? Infinity : 0);
+    return tempoB - tempoA;
 }
 
-/*** Normaliza o texto digitado: sem espacos nas pontas, email em minusculas. */
-function limpar(dados: FuncionarioAlteracao): FuncionarioAlteracao {
+/** Tira espaços e normaliza e-mail. */
+function limpar(dados: NovoFuncionario | FuncionarioAlteracao): FuncionarioAlteracao {
     const saida: FuncionarioAlteracao = {};
-    if (dados.nome  !== undefined) saida.nome  = dados.nome.trim();
+    if (dados.nome !== undefined) saida.nome = dados.nome.trim();
     if (dados.email !== undefined) saida.email = dados.email.trim().toLowerCase();
     if (dados.cargo !== undefined) saida.cargo = dados.cargo.trim();
     return saida;
 }
 
-/*** Validacao minima dos campos obrigatorios antes de ir ao banco. */
+/** Checa nome e e-mail; lança erro se estiver inválido. */
 function validar(dados: FuncionarioAlteracao, exigirTodos: boolean): void {
     const erros: string[] = [];
 
     if (exigirTodos || dados.nome !== undefined) {
-        if (!dados.nome) erros.push("o nome e obrigatorio");
+        if (!dados.nome) erros.push("o nome é obrigatório");
         else if (dados.nome.length < 2) erros.push("o nome precisa de ao menos 2 letras");
     }
 
     if (exigirTodos || dados.email !== undefined) {
-        if (!dados.email) erros.push("o email e obrigatorio");
-        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dados.email)) erros.push("o email e invalido");
+        if (!dados.email) erros.push("o email é obrigatório");
+        else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dados.email)) erros.push("o email é inválido");
     }
 
-    if (erros.length) throw new Error("Dados invalidos: " + erros.join("; ") + ".");
+    if (erros.length) throw new Error("Dados inválidos: " + erros.join("; ") + ".");
 }
 
-/*** Repassa a falha do Firestore com uma mensagem util para a tela. */
+/** Empacota o erro do Firestore numa mensagem clara. */
 function falha(acao: string, erro: unknown): never {
     const detalhe = erro instanceof Error ? erro.message : String(erro);
-    throw new Error(`Nao foi possivel ${acao}: ${detalhe}`);
+    throw new Error(`Não foi possível ${acao}: ${detalhe}`);
 }
 
-/* ------------------------------------------------------------------ */
-/* Leitura                                                             */
-/* ------------------------------------------------------------------ */
-
-/*** Lista os funcionarios, dos mais recentes para os mais antigos. */
+/** Lista todos os funcionários. */
 export async function listarFuncionarios(): Promise<Funcionario[]> {
+    if (!hasFirebaseConfig) return [...funcionariosLocais];
     try {
         const resultado = await getDocs(colecaoFuncionarios);
         return resultado.docs.map(paraFuncionario).sort(maisRecentesPrimeiro);
     } catch (erro) {
-        falha("carregar a lista de funcionarios", erro);
+        falha("carregar a lista de funcionários", erro);
     }
 }
 
-/*** Busca um funcionario pelo id. Devolve null quando nao existe. */
+/** Busca um funcionário pelo id. */
 export async function buscarFuncionario(id: string): Promise<Funcionario | null> {
-    if (!id) throw new Error("Id do funcionario nao informado.");
+    if (!id) throw new Error("Id do funcionário não informado.");
+    if (!hasFirebaseConfig) {
+        return funcionariosLocais.find((f) => f.id === id) ?? null;
+    }
     try {
         const snap = await getDoc(doc(db, COLECAO, id));
         return snap.exists() ? paraFuncionario(snap) : null;
     } catch (erro) {
-        falha("buscar o funcionario", erro);
+        falha("buscar o funcionário", erro);
     }
 }
 
-/*** Busca pelo email exato. Usado para nao cadastrar o mesmo email duas vezes. */
+/** Busca um funcionário pelo e-mail. */
 export async function buscarFuncionarioPorEmail(email: string): Promise<Funcionario | null> {
     const alvo = email.trim().toLowerCase();
-    if (!alvo) throw new Error("Email nao informado.");
+    if (!alvo) throw new Error("Email não informado.");
+    if (!hasFirebaseConfig) {
+        return funcionariosLocais.find((f) => f.email.toLowerCase() === alvo) ?? null;
+    }
     try {
         const consulta = query(colecaoFuncionarios, where("email", "==", alvo), limit(1));
         const resultado = await getDocs(consulta);
         return resultado.empty ? null : paraFuncionario(resultado.docs[0]);
     } catch (erro) {
-        falha("buscar o funcionario pelo email", erro);
+        falha("buscar o funcionário pelo email", erro);
     }
 }
 
-/***
-    Observa a colecao em tempo real: o retorno de chamada roda a cada
-    mudanca no banco. Devolve a funcao que cancela a escuta - chame-a no
-    retorno do useEffect para nao deixar o ouvinte vivo.
-*/
+/** Escuta a lista de funcionários em tempo real. */
 export function observarFuncionarios(
     aoAtualizar: (funcionarios: Funcionario[]) => void,
     aoFalhar?: (erro: Error) => void
 ): Unsubscribe {
+    if (!hasFirebaseConfig) {
+        ouvintes.push(aoAtualizar);
+        aoAtualizar([...funcionariosLocais]);
+        return () => {
+            const idx = ouvintes.indexOf(aoAtualizar);
+            if (idx >= 0) ouvintes.splice(idx, 1);
+        };
+    }
+
     return onSnapshot(
         colecaoFuncionarios,
         (resultado) =>
@@ -159,17 +171,27 @@ export function observarFuncionarios(
     );
 }
 
-/* ------------------------------------------------------------------ */
-/* Escrita                                                             */
-/* ------------------------------------------------------------------ */
-
-/*** Cadastra um funcionario e devolve o registro criado, com o id gerado. */
+/** Cadastra um funcionário. */
 export async function criarFuncionario(dados: NovoFuncionario): Promise<Funcionario> {
     const limpos = limpar(dados);
     validar(limpos, true);
 
     const jaExiste = await buscarFuncionarioPorEmail(limpos.email!);
-    if (jaExiste) throw new Error(`Ja existe um funcionario com o email ${limpos.email}.`);
+    if (jaExiste) throw new Error(`Já existe um funcionário com o email ${limpos.email}.`);
+
+    if (!hasFirebaseConfig) {
+        const novo: Funcionario = {
+            id: 'func-' + Date.now(),
+            nome: limpos.nome!,
+            email: limpos.email!,
+            cargo: limpos.cargo ?? "",
+            criadoEm: null,
+            pendente: false,
+        };
+        funcionariosLocais.unshift(novo);
+        notificar();
+        return novo;
+    }
 
     try {
         const criado = await addDoc(colecaoFuncionarios, {
@@ -188,16 +210,16 @@ export async function criarFuncionario(dados: NovoFuncionario): Promise<Funciona
             pendente: true,
         };
     } catch (erro) {
-        falha("cadastrar o funcionario", erro);
+        falha("cadastrar o funcionário", erro);
     }
 }
 
-/*** Atualiza os campos enviados de um funcionario ja cadastrado. */
+/** Atualiza um funcionário existente. */
 export async function atualizarFuncionario(
     id: string,
     dados: FuncionarioAlteracao
 ): Promise<void> {
-    if (!id) throw new Error("Id do funcionario nao informado.");
+    if (!id) throw new Error("Id do funcionário não informado.");
 
     const limpos = limpar(dados);
     if (Object.keys(limpos).length === 0) throw new Error("Nenhum campo para atualizar.");
@@ -206,23 +228,38 @@ export async function atualizarFuncionario(
     if (limpos.email) {
         const outro = await buscarFuncionarioPorEmail(limpos.email);
         if (outro && outro.id !== id) {
-            throw new Error(`O email ${limpos.email} ja pertence a outro funcionario.`);
+            throw new Error(`O email ${limpos.email} já pertence a outro funcionário.`);
         }
+    }
+
+    if (!hasFirebaseConfig) {
+        funcionariosLocais = funcionariosLocais.map((f) =>
+            f.id === id ? { ...f, ...limpos, nome: limpos.nome ?? f.nome, email: limpos.email ?? f.email } : f
+        );
+        notificar();
+        return;
     }
 
     try {
         await updateDoc(doc(db, COLECAO, id), { ...limpos, editadoEm: serverTimestamp() });
     } catch (erro) {
-        falha("atualizar o funcionario", erro);
+        falha("atualizar o funcionário", erro);
     }
 }
 
-/*** Remove um funcionario. */
+/** Apaga um funcionário. */
 export async function removerFuncionario(id: string): Promise<void> {
-    if (!id) throw new Error("Id do funcionario nao informado.");
+    if (!id) throw new Error("Id do funcionário não informado.");
+
+    if (!hasFirebaseConfig) {
+        funcionariosLocais = funcionariosLocais.filter((f) => f.id !== id);
+        notificar();
+        return;
+    }
+
     try {
         await deleteDoc(doc(db, COLECAO, id));
     } catch (erro) {
-        falha("remover o funcionario", erro);
+        falha("remover o funcionário", erro);
     }
 }
